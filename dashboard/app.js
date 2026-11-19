@@ -32,6 +32,92 @@
   function age(d) { return d === null || d === undefined ? 'n/a' : d >= 730 ? (d / 365).toFixed(1) + 'y' : d >= 60 ? Math.round(d / 30) + 'mo' : d + 'd'; }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
+  // ---------- drawn graphics ----------
+  var PALETTE = ['#ffb454', '#4fd1c5', '#a78bfa', '#6ee7a8', '#ff8fab', '#7dd3fc', '#f0a4ff', '#c9d67a'];
+  function catColor(c) {
+    var i = catList.indexOf(c);
+    return i >= 0 && i < PALETTE.length ? PALETTE[i] : '#5f7488';
+  }
+  function median(v) {
+    if (!v.length) return 0;
+    var s = v.slice().sort(function (a, b) { return a - b; });
+    var m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  /** The value curve: every priced protocol as a dot on TVL against implied value, the median curve
+   *  through them, and the top of the board called out. Drawn as SVG, no canvas and no network. */
+  function chartSvg() {
+    var W = 1360, H = 330, L = 62, R = 18, T = 18, B = 34;
+    var xs = rows.map(function (r) { return Math.log10(r.tvl_usd); });
+    var ys = rows.map(function (r) { return Math.log10(r.implied_value_usd); });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    var px = function (v) { return L + ((v - x0) / (x1 - x0)) * (W - L - R); };
+    var py = function (v) { return H - B - ((v - y0) / (y1 - y0)) * (H - T - B); };
+    var out = [];
+    // median curve: bins of TVL with the median implied value in each
+    var bins = 14, curve = [];
+    for (var i = 0; i < bins; i++) {
+      var lo = x0 + ((x1 - x0) * i) / bins, hi = x0 + ((x1 - x0) * (i + 1)) / bins;
+      var inBin = rows.filter(function (r) { var l = Math.log10(r.tvl_usd); return l >= lo && l <= hi; });
+      if (!inBin.length) continue;
+      curve.push([px(lo + (hi - lo) / 2), py(Math.log10(median(inBin.map(function (r) { return r.implied_value_usd; }))))]);
+    }
+    var line = curve.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' ');
+    var area = line + ' L' + curve[curve.length - 1][0].toFixed(1) + ' ' + (H - B) + ' L' + curve[0][0].toFixed(1) + ' ' + (H - B) + ' Z';
+    out.push('<svg class="viz" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Implied value against TVL for every priced protocol">');
+    out.push('<defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="#4fd1c5" stop-opacity=".38"/><stop offset="60%" stop-color="#2b6cb0" stop-opacity=".13"/>' +
+      '<stop offset="100%" stop-color="#0a0e13" stop-opacity="0"/></linearGradient>' +
+      '<linearGradient id="glow" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ffb454"/>' +
+      '<stop offset="100%" stop-color="#4fd1c5"/></linearGradient></defs>');
+    // grid + labels
+    var yTicks = [], xTicks = [];
+    for (var d = Math.ceil(y0); d <= y1; d++) yTicks.push(d);
+    [Math.log10(5e6), Math.log10(2e7), Math.log10(1e8), Math.log10(5e8), Math.log10(2e9), Math.log10(1e10)].forEach(function (v) {
+      if (v >= x0 && v <= x1) xTicks.push(v);
+    });
+    yTicks.forEach(function (d) {
+      var y = py(d);
+      out.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#16202b" stroke-width="1"/>');
+      out.push('<text x="' + (L - 9) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end" class="ax">' + usd(Math.pow(10, d)) + '</text>');
+    });
+    xTicks.forEach(function (v) {
+      var x = px(v);
+      out.push('<line x1="' + x.toFixed(1) + '" y1="' + T + '" x2="' + x.toFixed(1) + '" y2="' + (H - B) + '" stroke="#16202b" stroke-width="1" stroke-dasharray="2 5"/>');
+      out.push('<text x="' + x.toFixed(1) + '" y="' + (H - B + 18) + '" text-anchor="middle" class="ax">' + usd(Math.pow(10, v)) + '</text>');
+    });
+    out.push('<path d="' + area + '" fill="url(#fill)"/>');
+    out.push('<path d="' + line + '" fill="none" stroke="url(#glow)" stroke-width="2.2" stroke-linejoin="round" opacity=".95"/>');
+    rows.forEach(function (r) {
+      var c = catColor(r.category || 'unclassified');
+      out.push('<circle cx="' + px(Math.log10(r.tvl_usd)).toFixed(1) + '" cy="' + py(Math.log10(r.implied_value_usd)).toFixed(1) +
+        '" r="' + (r.rank <= 10 ? 5 : 3.2) + '" fill="' + c + '" fill-opacity="' + (r.rank <= 10 ? '.95' : '.55') + '" stroke="' + (r.rank <= 10 ? '#0a0e13' : 'none') + '" stroke-width="1.4"/>');
+    });
+    rows.slice(0, 3).forEach(function (r) {
+      out.push('<text x="' + (px(Math.log10(r.tvl_usd)) + 9).toFixed(1) + '" y="' + (py(Math.log10(r.implied_value_usd)) + 4).toFixed(1) + '" class="lbl">' + esc(r.name) + '</text>');
+    });
+    out.push('<text x="' + L + '" y="' + (H - 4) + '" class="ax">TVL, log scale →</text>');
+    out.push('<text x="' + (W - R) + '" y="' + (T + 10) + '" text-anchor="end" class="ax">implied value, log scale ↑</text>');
+    out.push('</svg>');
+    return out.join('');
+  }
+
+  /** The board's composition: a stacked strip of categories, widest first. */
+  function heatStrip() {
+    var total = rows.length, x = 0, parts = [], legend = [];
+    catList.slice(0, 8).forEach(function (c, i) {
+      var w = (cats[c] / total) * 100;
+      parts.push('<i style="left:' + x.toFixed(2) + '%;width:' + w.toFixed(2) + '%;background:' + PALETTE[i] + '"></i>');
+      legend.push('<span><b style="background:' + PALETTE[i] + '"></b>' + esc(c) + ' <em>' + cats[c] + '</em></span>');
+      x += w;
+    });
+    parts.push('<i style="left:' + x.toFixed(2) + '%;width:' + (100 - x).toFixed(2) + '%;background:#5f7488"></i>');
+    legend.push('<span><b style="background:#5f7488"></b>every other category <em>' + (total - catList.slice(0, 8).reduce(function (a, c) { return a + cats[c]; }, 0)) + '</em></span>');
+    return '<div class="strip">' + parts.join('') + '</div><div class="legend">' + legend.join('') + '</div>';
+  }
+
   // ---------- header ----------
   document.getElementById('ver').textContent = D.model_version;
   document.getElementById('meta').innerHTML =
@@ -82,12 +168,14 @@
       '<b>' + D.pre_token_total + '</b> record no token at all; <b>' + D.board_size + '</b> of them are protocols rather than a wrapped, staked or bridged product of one that trades, and each is priced ' +
       'from the market cap per dollar of TVL that <b>' + fit.prior_comps + ' trading protocols</b> in the same snapshot already carry, at the protocol\'s own size and in its own category. ' +
       'The house watchlist of <b>' + D.watchlist_size + '</b> is the floor of this board, not its ceiling: ' + D.below_floor + ' rows sit below it.</p>' +
-      '<div class="stats">' +
-        '<div class="stat amber"><div class="k">Implied value on the board</div><div class="v">' + usd(D.implied_total_usd) + '</div><div class="s">sum of all ' + D.board_size + ' priced protocols</div></div>' +
+      '<div class="stats">' +        '<div class="stat amber"><div class="k">Implied value on the board</div><div class="v">' + usd(D.implied_total_usd) + '</div><div class="s">sum of all ' + D.board_size + ' priced protocols</div></div>' +
         '<div class="stat cyan"><div class="k">Comps the fit reads</div><div class="v">' + fit.prior_comps + '</div><div class="s">trading protocols with a market cap, prior ' + x(fit.prior_multiple) + '</div></div>' +
         '<div class="stat green"><div class="k">Leave-one-out miss</div><div class="v">' + x(chk.model_median_miss) + '</div><div class="s">median, vs ' + x(chk.blanket_median_miss) + ' for one blanket multiple</div></div>' +
         '<div class="stat violet"><div class="k">Priced within 2×</div><div class="v">' + Math.round(chk.within_2x * 100) + '%</div><div class="s">of ' + chk.scored + ' trading protocols, rank IC ' + chk.rank_ic.toFixed(2) + '</div></div>' +
       '</div>' +
+      '<div class="modelstrip"><span class="tag">' + D.model_version + '</span>' +
+        '<code>implied = TVL × exp(' + fit.intercept.toFixed(2) + ' + ' + fit.slope.toFixed(2) + '·log10 TVL + offset(category)) × growth × patience</code>' +
+        '<span>fitted on ' + fit.prior_comps + ' trading protocols · ' + fit.categories.length + ' categories · shrink k=' + fit.model.shrink_k + ' · miss ' + x(chk.model_median_miss) + '</span></div>' +
       '<div class="controls">' +
         '<input id="q" type="search" placeholder="Search protocol, slug or category" value="' + esc(state.q) + '">' +
         '<select id="cat"><option value="all">Every category</option>' + catList.map(function (c) { return '<option value="' + esc(c) + '"' + (state.cat === c ? ' selected' : '') + '>' + esc(c) + ' (' + cats[c] + ')</option>'; }).join('') + '</select>' +
@@ -111,6 +199,12 @@
         '</tr>';
       }).join('') +
       '</tbody></table>' +
+      '<div class="card vizcard" id="curve">' +
+        '<div class="vizhead"><h2>The board as a curve</h2>' +
+          '<span class="hint">a dot is a priced protocol, its colour its category; the line is the median implied value at that TVL, so the board\'s own shape is visible</span>' +
+          '<span class="chip w">watchlist ' + D.watchlist_size + ' / ' + D.watchlist_size + ' covered</span></div>' +
+        chartSvg() + heatStrip() +
+      '</div>' +
       '<div class="foot">Rows: ' + rows.length + ' pre-token protocols, ranked by implied value. Click any row for the arithmetic behind its number and its farm plan. ' +
       'Implied value is this board\'s own claim, derived from the snapshot, never a prediction that a token is issued.</div>';
     app.innerHTML = html;
@@ -120,6 +214,22 @@
   function stepParts(s) {
     var m = s.match(/^(.*?) Cost: (.*)\. Time: (.*)\.$/);
     return m ? { text: m[1], cost: m[2], time: m[3] } : { text: s, cost: '', time: '' };
+  }
+
+  /** The trading protocols this row's multiple was read from: the category's comps, largest first. */
+  function compsTable(r) {
+    var cat = r.category || 'unclassified';
+    var list = (D.comps || []).filter(function (c) { return (c.category || 'unclassified') === cat; }).slice(0, 6);
+    if (!list.length) return '<div class="note">No trading protocol in the snapshot shares this category, so the multiple comes from the market-wide size curve alone.</div>';
+    var med = median(list.map(function (c) { return c.multiple; }));
+    return '<table class="mini"><thead><tr><th>Comp</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">mcap / TVL</th></tr></thead><tbody>' +
+      list.map(function (c) {
+        return '<tr><td class="cat">' + esc(c.name) + '</td><td class="num">' + usd(c.tvl_usd) + '</td><td class="num">' + usd(c.mcap_usd) + '</td>' +
+          '<td class="num">' + (Math.abs(c.multiple - med) < 1e-9 ? '<b style="color:#ffb454">' + x(c.multiple) + '</b>' : x(c.multiple)) + '</td></tr>';
+      }).join('') +
+      '</tbody></table><p class="small">' + (list.length >= 3
+        ? 'Median ' + x(med) + ' across these ' + list.length + '; the fit shrinks that toward the whole market and then applies the size curve at ' + usd(r.tvl_usd) + ', which lands on ' + x(r.multiple) + '.'
+        : 'These ' + list.length + ' ' + (list.length === 1 ? 'is' : 'are') + ' too few to move the fit — it needs three comps in a category — so the size curve alone lands on ' + x(r.multiple) + '.') + '</p>';
   }
 
   function detailHtml(r) {
@@ -141,12 +251,19 @@
         '<div class="lab tot">TVL × multiple × growth × patience</div><div class="val tot">' + usd(r.implied_value_usd) + '</div>' +
       '</div>' +
       '<h3>Why this multiple</h3>' +
-      '<div class="note">' + (comps
-        ? 'The <b>' + esc(comps.category) + '</b> category carries <b>' + comps.comps + ' trading comps</b> with a median of <b>' + x(comps.median_multiple) + '</b> market cap per dollar of TVL. ' +
-          'Across the whole market the fit pays <b>' + x(comps.multiple_at_100m) + '</b> at $100M of TVL; this protocol is ' + usd(r.tvl_usd) + ', so the size curve puts it at <b>' + x(r.multiple) + '</b>.'
+      '<div class="note">' + (comps && comps.comps >= 3
+        ? 'The <b>' + esc(comps.category) + '</b> category carries <b>' + comps.comps + ' trading comps</b> with a median of <b>' + x(comps.median_multiple) + '</b> market cap per dollar of TVL, so its offset moves the market curve by ' +
+          ((comps.offset >= 0 ? '+' : '') + Math.round((Math.exp(comps.offset) - 1) * 100) + '%') + '. ' +
+          'At $100M of TVL the fit pays <b>' + x(comps.multiple_at_100m) + '</b> here; this protocol is ' + usd(r.tvl_usd) + ', so the size curve puts it at <b>' + x(r.multiple) + '</b>.'
+        : comps
+        ? 'Only <b>' + comps.comps + ' trading protocol' + (comps.comps === 1 ? '' : 's') + '</b> in the snapshot shares the <b>' + esc(comps.category) + '</b> category (median ' + x(comps.median_multiple) + '), which is too thin to move a price: the fit needs three comps before a category may shift the curve, so this row takes the market-wide size curve alone at <b>' + x(r.multiple) + '</b>.'
         : 'This protocol records no DefiLlama category, so it takes the market-wide size curve alone: <b>' + x(r.multiple) + '</b>.') +
         ' Nothing here is special-cased by name: every row runs the same function.</div>' +
+      '<h3>The comps behind this multiple</h3>' +
+      compsTable(r) +
       '<h3>Farm it before the launch</h3>' +
+      '<div class="planstrip"><span><b>$' + r.farm_cost_usd + '</b> capital</span><span><b>' + r.farm_days + ' days</b> hold</span>' +
+      '<span><b>~$2/wk</b> gas</span><span><b>' + r.farm_steps.length + '</b> steps</span></div>' +
       '<ol class="steps">' + r.farm_steps.map(function (s) {
         var p = stepParts(s);
         return '<li>' + esc(p.text) + '<span class="cost">cost: ' + esc(p.cost) + ' · time: ' + esc(p.time) + '</span></li>';
@@ -200,12 +317,13 @@
       '<div class="method">' +
       '<div>' +
         '<div class="card"><h2>The model</h2>' +
-        '<pre><em>y</em> = ln(mcap / tvl), winsorized to [0.01, 20]\n<em>x</em> = log10(tvl)\n\n<em>y</em> = a + b·<em>x</em> + offset(category)      <i># fitted on the comps</i>\n\noffset(c) = n·median(residual) / (n + 6)   <i># shrunk to the market</i>\n\nmultiple(p) = exp(a + b·log10(tvl) + offset(cat))\n\nimplied = tvl · multiple\n          · (1 + clamp(7d, -60, +150)/100 · 0.30)\n          · (0.85 + min(age, 1825)/1825 · 0.15)</pre>' +
+        '<pre><em>y</em> = ln(mcap / tvl), winsorized to [0.01, 20]\n<em>x</em> = log10(tvl)\n\n<em>y</em> = a + b·<em>x</em> + offset(category)      <i># fitted on the comps</i>\n\noffset(c) = n·median(residual) / (n + 6)   <i># shrunk to the market</i>\noffset(c) = 0 when n < 3                  <i># too thin to price</i>\n\nmultiple(p) = exp(a + b·log10(tvl) + offset(cat))\n\nimplied = tvl · multiple\n          · (1 + clamp(7d, -60, +150)/100 · 0.30)\n          · (0.85 + min(age, 1825)/1825 · 0.15)</pre>' +
         '<p>The three inputs are the snapshot\'s own: <b>TVL</b> sets the size, the <b>seven-day change</b> tilts the multiple, and <b>how long the protocol has run with no token</b> tilts it again — a franchise that has survived five years without issuing one is worth more than one that appeared last month.</p>' +
         '<dl class="kv"><dt>a, intercept</dt><dd>' + fit.intercept.toFixed(4) + '</dd>' +
         '<dt>b, size slope</dt><dd>' + fit.slope.toFixed(4) + ' per decade of TVL</dd>' +
         '<dt>prior multiple</dt><dd>' + x(fit.prior_multiple) + ' (median across ' + fit.prior_comps + ' comps)</dd>' +
         '<dt>shrinkage k</dt><dd>' + fit.model.shrink_k + ' comps</dd>' +
+        '<dt>min comps</dt><dd>' + fit.model.min_category_comps + ' per category, else the size curve alone</dd>' +
         '<dt>winsor bounds</dt><dd>' + fit.model.multiple_floor + '× to ' + fit.model.multiple_cap + '×</dd></dl></div>' +
         '<div class="card" style="margin-top:16px"><h2>The screen</h2>' +
         '<p>A protocol is on the board when the snapshot records <b>no market cap, no CoinGecko id and no symbol</b> for it, when it is not a wrapped, staked or bridged product of a token that trades ' +

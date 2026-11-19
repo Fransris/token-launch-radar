@@ -54,6 +54,7 @@ export interface ModelConstants {
   patience_days: number;
   unknown_age_days: number;
   shrink_k: number;
+  min_category_comps: number;
   multiple_floor: number;
   multiple_cap: number;
   min_tvl: number;
@@ -67,6 +68,7 @@ export const MODEL: ModelConstants = {
   patience_days: 1825,
   unknown_age_days: 365,
   shrink_k: 6,
+  min_category_comps: 3,
   multiple_floor: 0.01,
   multiple_cap: 20,
   min_tvl: 5_000_000,
@@ -160,6 +162,16 @@ export interface LiveRow {
   model_value: number | null;
 }
 
+/** One comp as the detail view lists it: the trading protocols a category's multiple rests on. */
+export interface CompRow {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  mcap_usd: number;
+  multiple: number;
+}
+
 /** Everything the page renders. */
 export interface RadarData {
   as_of: string;
@@ -176,6 +188,7 @@ export interface RadarData {
   implied_total_usd: number;
   rows: BoardRow[];
   live: LiveRow[];
+  comps: CompRow[];
 }
 
 export class SnapshotError extends Error {
@@ -323,7 +336,9 @@ export function fitModel(snapshot: Snapshot, model: ModelConstants = MODEL): Fit
     .map(([category, list]) => {
       const residuals = list.map((p) => logMultiple(p) - (a + b * Math.log10(p.tvl_usd)));
       const n = list.length;
-      const offset = (n * median(residuals)) / (n + k);
+      // A category with fewer than min_category_comps is too thin to move a price: its offset is
+      // zero, and the size curve alone prices the protocols in it.
+      const offset = n < model.min_category_comps ? 0 : (n * median(residuals)) / (n + k);
       return {
         category,
         comps: n,
@@ -350,7 +365,7 @@ export function fitModel(snapshot: Snapshot, model: ModelConstants = MODEL): Fit
     const rest = comps.filter((q) => q.slug !== p.slug);
     const curve = sizeCurve(rest);
     const residuals = rest.filter((q) => (q.category ?? 'unclassified') === (p.category ?? 'unclassified')).map((q) => logMultiple(q) - (curve.a + curve.b * Math.log10(q.tvl_usd)));
-    const offset = residuals.length === 0 ? 0 : (residuals.length * median(residuals)) / (residuals.length + k);
+    const offset = residuals.length < model.min_category_comps ? 0 : (residuals.length * median(residuals)) / (residuals.length + k);
     const multiple = Math.min(model.multiple_cap, Math.max(model.multiple_floor, Math.exp(curve.a + curve.b * Math.log10(p.tvl_usd) + offset)));
     const actual = p.mcap_usd ?? 0;
     if (actual <= 0) continue;
@@ -475,6 +490,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): { steps: Far
       time: '10 minutes a week',
     },
     {
+      text: `Unwind in the order this plan sets: withdraw the borrowed side first, then the supplied collateral, then move the stablecoin out — and leave enough gas for one last transaction.`,
+      cost: 'about $3 of gas to exit, and no exit fee at ' + p.name,
+      time: '20 minutes on the day you leave',
+    },
+    {
       text: `Write the wallet address, the dates and every transaction in a farm log, and note the exit: what you withdraw first and what you leave behind.`,
       cost: 'nothing but the log',
       time: '5 minutes',
@@ -556,6 +576,16 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const fit = fitModel(snapshot, model);
   const board = buildBoard(snapshot, fit);
   const live = liveRows(snapshot, fit);
+  const comps: CompRow[] = compsUniverse(snapshot.protocols)
+    .map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      category: p.category,
+      tvl_usd: p.tvl_usd,
+      mcap_usd: p.mcap_usd ?? 0,
+      multiple: round4(Math.min(model.multiple_cap, Math.max(model.multiple_floor, (p.mcap_usd ?? 0) / p.tvl_usd))),
+    }))
+    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1));
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -571,6 +601,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     implied_total_usd: board.reduce((a, r) => a + r.implied_value_usd, 0),
     rows: board,
     live,
+    comps,
   };
   return { board, radar };
 }

@@ -25,13 +25,14 @@ y = ln(mcap / tvl)   winsorized to [0.01, 20]
 x = log10(tvl)
 y = a + b·x + offset(category)          fitted on the protocols whose token already trades
 offset(c) = n·median(residual) / (n+6)  shrunk toward the market
+offset(c) = 0 when n < 3               too thin to move a price
 multiple(p) = exp(a + b·log10(tvl) + offset(cat))
 
 implied = tvl · multiple · (1 + clamp(7d,-60,+150)/100 · 0.30) · (0.85 + min(age,1825)/1825 · 0.15)
 ```
 
 The fit is checked leave-one-out: every trading protocol is re-priced from the comps of the others,
-never itself. On this snapshot the median miss is **3.47×**, against **4.94×** for one blanket
+never itself. On this snapshot the median miss is **3.38×**, against **4.94×** for one blanket
 multiple, with 34% inside 2× and a rank correlation of 0.38. Those numbers ship in `data.js` and are
 shown on the page, because a radar that hides its own error is a horoscope.
 
