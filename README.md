@@ -1,10 +1,24 @@
-# Token Launch Radar
+# token-launch-radar
 
-A board of every protocol in the sealed DefiLlama snapshot that **records no token**, ranked by what
-its launch would plausibly be worth, with a costed farm plan for each one.
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/Fransris/token-launch-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/Fransris/token-launch-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-The radar answers one question with the snapshot's own figures: *if this protocol issued a token
-today, what would it be worth?* Nothing is hardcoded by name and no multiple is a constant.
+A board of every protocol in the sealed DefiLlama snapshot that records no token, ranked by what its
+launch would plausibly be worth, with a costed farm plan for each one.
+
+## Run it
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-kit/input/snapshot.json
+```
+
+---
+
+## What the radar does
+
+It answers one question with the snapshot's own figures: *if this protocol issued a token today, what
+would it be worth?* Nothing is hardcoded by name and no multiple is a constant.
 
 ```
 y = ln(mcap / tvl)   winsorized to [0.01, 20]
@@ -21,18 +35,13 @@ never itself. On this snapshot the median miss is **3.47×**, against **4.94×**
 multiple, with 34% inside 2× and a rank correlation of 0.38. Those numbers ship in `data.js` and are
 shown on the page, because a radar that hides its own error is a horoscope.
 
-## Run it
+## What it writes
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-kit/input/snapshot.json
-```
-
-Node 22.18 or later, standard library only, no network. The program reads the snapshot, writes
-`out/board.json` (198 rows, every one of the 40 house-watchlist protocols among them), `out/data.js`,
-copies `dashboard/` and `screenshots/`, and writes `out/dossier.json` with `vendor/makefun-board.ts`.
-It reads no clock and no random source: two runs write identical bytes.
-
-## What is in here
+`main.ts` reads the snapshot and writes `out/board.json` (198 rows, every one of the 40
+house-watchlist protocols among them), `out/data.js` for the page, copies `dashboard/` and
+`screenshots/`, and writes `out/dossier.json` with `vendor/makefun-board.ts`. Node 22.18 or later,
+standard library only, no network. It reads no clock and no random source: two runs write identical
+bytes.
 
 - `main.ts` — entrypoint: read, price, write, gate-check, dossier.
 - `lib/model.ts` — the comps fit, the leave-one-out check, the board, the farm plans.
@@ -55,3 +64,7 @@ DefiLlama's record is not proof that none exists.
 ## License
 
 MIT — see `LICENSE`.
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?ref=zydymsxs&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
