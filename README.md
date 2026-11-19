@@ -41,11 +41,21 @@ would it be worth?* Nothing is hardcoded by name and no multiple is a constant.
 
 **Farm verdicts, with the assumptions stated**
 
-`expected = implied × 0.000001` (one wallet's share), minus gas ($12 in, $3 out) and carry (6% a year
-on the deposit). 14 rows clear $10 net and read **farm**; 21 land between $0 and $10 (**thin**); 163
-cost more than they expect (**skip**). Every row also shows the implied value at which its plan breaks
-even, so the margin is visible rather than asserted. Those numbers ship in `data.js` and are shown on
-the page, because a radar that hides its own error is a horoscope.
+Value if it launches is half the question; the other half is whether it launches. The radar prices that
+too, as a **category base rate**: the share of that category in this snapshot that already records a
+token, Laplace-smoothed. Risk Curators sits at 15%, Dexs at 74%, Lending at 79%.
+
+That is a cross-sectional prior and it is labelled as one, not a forecast: the snapshot carries no
+launch dates, so a time-to-launch model cannot be estimated from it. A test on the data settled that
+question — token-bearing protocols are *older* in DefiLlama's record than pre-token ones in 17 of 20
+categories, because `listed_at` is when tracking began, not when a token appeared, so an age term would
+read that confound as signal. The model carries none.
+
+`expected = implied × odds × 0.08 airdrop ÷ 20,000 wallets`, minus gas ($12 in, $3 out) and carry (6% a
+year on the deposit). 37 rows clear $10 net and read **farm**; 34 land between $0 and $10 (**thin**);
+127 cost more than they expect (**skip**). Every row also shows the implied value at which its plan
+breaks even, so the margin is visible rather than asserted. Those numbers ship in `data.js` and are
+shown on the page, because a radar that hides its own error is a horoscope.
 
 ## What it writes
 

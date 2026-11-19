@@ -78,14 +78,19 @@ export const MODEL_VERSION = 'comps-4';
 
 /**
  * The farm economics, stated so a reader can disagree with any of them:
- *   expected  = implied value × CAPTURE       one farmed wallet's share of a launch that size
- *   carry     = deposit × CARRY_APR × days/365  what the deposit would have earned elsewhere
+ *   odds      = the category's own base rate: the share of that category in this snapshot that
+ *               already records a token. A cross-sectional base rate, not a hazard: the snapshot
+ *               carries no launch dates, so a time-to-launch model cannot be estimated from it
+ *               and is not claimed here.
+ *   expected  = implied value × odds × AIRDROP_SHARE / WALLETS
+ *   carry     = deposit × CARRY_APR × days/365      what the deposit would have earned elsewhere
  *   cost      = GAS_SETUP + GAS_EXIT + carry
  *   net       = expected - cost
- * A plan is worth doing when net clears FARM_MIN_NET; below zero it is a skip.
+ * A plan is worth doing when net clears MIN_NET; between zero and that it is thin; below zero, skip.
  */
 export const FARM = {
-  capture: 1e-6,
+  airdrop_share: 0.08,
+  wallets: 20_000,
   carry_apr: 0.06,
   gas_setup: 12,
   gas_exit: 3,
@@ -181,6 +186,10 @@ export interface BoardRow {
   farm_days: number;
   /** The verdict the numbers give: is one farmed wallet worth its cost, net of gas and carry? */
   farm_verdict: 'farm' | 'thin' | 'skip';
+  /** The category's own token base rate in this snapshot, and the expected value it discounts to. */
+  launch_odds: number;
+  category_token_share: number;
+  expected_value_usd: number;
   farm_capital_usd: number;
   farm_expected_usd: number;
   farm_carry_usd: number;
@@ -231,8 +240,10 @@ export interface RadarData {
   protocols_total: number;
   live_size: number;
   implied_total_usd: number;
+  expected_total_usd: number;
   farm_counts: { farm: number; thin: number; skip: number };
   farm_assumptions: typeof FARM;
+  category_odds: { category: string; with_token: number; total: number; share: number }[];
   rows: BoardRow[];
   live: LiveRow[];
   comps: CompRow[];
@@ -619,15 +630,46 @@ export function stepText(step: FarmStep): string {
   return s;
 }
 
+/**
+ * The category's own token base rate: of the protocols in this snapshot that DefiLlama puts in this
+ * category, what share already records a token. It is a cross-sectional prior, read straight off the
+ * data, and it is deliberately not dressed up as a hazard: the snapshot carries no launch dates, so
+ * nothing here can say when a launch would happen, only how common a token is in the company a
+ * protocol keeps.
+ */
+export function categoryTokenShare(protocols: SnapshotProtocol[]): Map<string, { share: number; withToken: number; total: number }> {
+  const acc = new Map<string, { withToken: number; total: number }>();
+  for (const p of protocols) {
+    if (p.category === 'CEX') continue;
+    const key = p.category ?? 'unclassified';
+    const cur = acc.get(key) ?? { withToken: 0, total: 0 };
+    cur.total += 1;
+    if (!isPreToken(p)) cur.withToken += 1;
+    acc.set(key, cur);
+  }
+  const out = new Map<string, { share: number; withToken: number; total: number }>();
+  for (const [key, v] of acc) {
+    // Laplace-smoothed, so a category with two protocols cannot claim a 0% or 100% rate.
+    const share = (v.withToken + 1) / (v.total + 2);
+    out.set(key, { share, withToken: v.withToken, total: v.total });
+  }
+  return out;
+}
+
 /** The board: every pre-token protocol the snapshot records, strongest implied value first. */
 export function buildBoard(snapshot: Snapshot, fit: Fit): BoardRow[] {
   const watch = new Set(snapshot.watchlist);
   const band = Math.exp(fit.check.model_median_miss);
+  const shares = categoryTokenShare(snapshot.protocols);
+  const perWallet = FARM.airdrop_share / FARM.wallets;
   const scored = snapshot.protocols.filter(isRankable).map((p) => ({ p, v: impliedValue(p, snapshot.as_of, fit) }));
   scored.sort((a, b) => b.v.implied - a.v.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => {
     const plan = farmSteps(s.p, s.v.age);
-    const expected = s.v.implied * FARM.capture;
+    const cat = shares.get(s.p.category ?? 'unclassified') ?? { share: 0.5, withToken: 0, total: 0 };
+    const odds = Math.min(0.95, Math.max(0.02, cat.share));
+    const expectedValue = s.v.implied * odds;
+    const expected = expectedValue * perWallet;
     const carry = plan.capital * FARM.carry_apr * (plan.days / 365);
     const totalCost = FARM.gas_setup + FARM.gas_exit + carry;
     const net = expected - totalCost;
@@ -663,12 +705,15 @@ export function buildBoard(snapshot: Snapshot, fit: Fit): BoardRow[] {
       farm_cost_usd: plan.capital,
       farm_days: plan.days,
       farm_verdict: verdict,
+      launch_odds: round4(odds),
+      category_token_share: round4(cat.share),
+      expected_value_usd: Math.round(expectedValue),
       farm_capital_usd: plan.capital,
       farm_expected_usd: round4(expected),
       farm_carry_usd: round4(carry),
       farm_total_cost_usd: round4(totalCost),
       farm_net_usd: round4(net),
-      farm_breakeven_usd: Math.round(totalCost / FARM.capture),
+      farm_breakeven_usd: Math.round(totalCost / perWallet),
       implied_low_usd: Math.max(1, Math.round(s.v.implied / band)),
       implied_high_usd: Math.round(s.v.implied * band),
     };
@@ -722,12 +767,16 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     protocols_total: snapshot.protocols.length,
     live_size: live.length,
     implied_total_usd: board.reduce((a, r) => a + r.implied_value_usd, 0),
+    expected_total_usd: board.reduce((a, r) => a + r.expected_value_usd, 0),
     farm_counts: {
       farm: board.filter((r) => r.farm_verdict === 'farm').length,
       thin: board.filter((r) => r.farm_verdict === 'thin').length,
       skip: board.filter((r) => r.farm_verdict === 'skip').length,
     },
     farm_assumptions: FARM,
+    category_odds: [...categoryTokenShare(snapshot.protocols).entries()]
+      .map(([category, v]) => ({ category, with_token: v.withToken, total: v.total, share: round4(v.share) }))
+      .sort((a, b) => b.total - a.total || (a.category < b.category ? -1 : 1)),
     rows: board,
     live,
     comps,

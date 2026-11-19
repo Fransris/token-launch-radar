@@ -143,8 +143,8 @@
       return true;
     }).sort(function (a, b) {
       var k = state.sort, d = state.dir;
-      var av = k === 'name' ? a.name : k === 'tvl' ? a.tvl_usd : k === 'chg' ? (a.change_7d === null ? -1e9 : a.change_7d) : k === 'age' ? (a.age_days === null ? -1 : a.age_days) : k === 'mult' ? a.multiple : k === 'rank' ? a.rank : a.implied_value_usd;
-      var bv = k === 'name' ? b.name : k === 'tvl' ? b.tvl_usd : k === 'chg' ? (b.change_7d === null ? -1e9 : b.change_7d) : k === 'age' ? (b.age_days === null ? -1 : b.age_days) : k === 'mult' ? b.multiple : k === 'rank' ? b.rank : b.implied_value_usd;
+      var av = k === 'name' ? a.name : k === 'tvl' ? a.tvl_usd : k === 'chg' ? (a.change_7d === null ? -1e9 : a.change_7d) : k === 'age' ? (a.age_days === null ? -1 : a.age_days) : k === 'odds' ? a.launch_odds : k === 'mult' ? a.multiple : k === 'rank' ? a.rank : a.implied_value_usd;
+      var bv = k === 'name' ? b.name : k === 'tvl' ? b.tvl_usd : k === 'chg' ? (b.change_7d === null ? -1e9 : b.change_7d) : k === 'age' ? (b.age_days === null ? -1 : b.age_days) : k === 'odds' ? b.launch_odds : k === 'mult' ? b.multiple : k === 'rank' ? b.rank : b.implied_value_usd;
       if (av === bv) return a.rank - b.rank;
       return (av > bv ? 1 : -1) * d;
     });
@@ -153,7 +153,7 @@
   function boardHead() {
     var h = [
       ['rank', '#'], ['name', 'Protocol'], ['cat', 'Category'], ['chain', 'Chains'], ['tvl', 'TVL'],
-      ['chg', '7d'], ['age', 'No token for'], ['mult', 'Fitted multiple'], ['verdict', 'Farm net'], ['implied', 'Implied value']
+      ['chg', '7d'], ['age', 'No token for'], ['odds', 'Launch odds'], ['verdict', 'Farm net'], ['implied', 'Implied value']
     ];
     return h.map(function (c) {
       var on = state.sort === c[0] ? ' style="color:#e9eff7"' : '';
@@ -203,7 +203,7 @@
         '<div class="stat cyan"><div class="k">Comps the fit reads</div><div class="v">' + fit.prior_comps + '</div><div class="s">trading protocols, prior ' + x(fit.prior_multiple) + '</div></div>' +
         '<div class="stat green"><div class="k">Leave-one-out miss</div><div class="v">' + x(chk.model_median_miss) + '</div><div class="s">vs ' + x(chk.blanket_median_miss) + ' for one blanket multiple</div></div>' +
         '<div class="stat violet"><div class="k">Time-split miss</div><div class="v">' + x(ts.combined_miss) + '</div><div class="s">' + ts.old_n + ' older comps price ' + ts.new_n + ' newer ones</div></div>' +
-        '<div class="stat farmc"><div class="k">Farm verdicts</div><div class="v">' + D.farm_counts.farm + '<em>farm</em></div><div class="s">' + D.farm_counts.thin + ' thin · ' + D.farm_counts.skip + ' skip, net of gas and carry</div></div>' +
+        '<div class="stat farmc"><div class="k">Farm verdicts</div><div class="v">' + D.farm_counts.farm + '<em>farm</em></div><div class="s">' + D.farm_counts.thin + ' thin · ' + D.farm_counts.skip + ' skip · ' + usd(D.expected_total_usd) + ' expected</div></div>' +
       '</div>' +
       verificationStrip() +
       '<div class="modelstrip"><span class="tag">' + D.model_version + '</span>' +
@@ -238,7 +238,8 @@
           '<td class="num">' + usd(r.tvl_usd) + '</td>' +
           '<td class="num">' + pct(r.change_7d) + '</td>' +
           '<td class="num">' + age(r.age_days) + '</td>' +
-          '<td class="num">' + x(r.multiple) + '</td>' +
+          '<td class="num odds">' + Math.round(r.launch_odds * 100) + '%<span class="odbar"><i style="width:' + Math.round(r.launch_odds * 100) + '%"></i></span></td>' +
+          '<td class="num vcell">' + verdictChip(r.farm_verdict) + '<span class="vnet">' + (r.farm_net_usd >= 0 ? '+' : '') + '$' + Math.round(r.farm_net_usd) + '</span></td>' +
           '<td class="num barcell"><div class="barval">' + usd(r.implied_value_usd) + '</div><div class="bar"><i style="width:' + w + '%"></i></div></td>' +
         '</tr>';
       }).join('') +
@@ -274,7 +275,8 @@
   function econTable(r) {
     var a = D.farm_assumptions;
     var rows2 = [
-      ['expected at launch', usd(r.farm_expected_usd), 'implied value × ' + a.capture + ', one wallet\'s share'],
+      ['expected at launch', usd(r.farm_expected_usd), 'implied ' + usd(r.implied_value_usd) + ' × ' + Math.round(r.launch_odds * 100) + '% odds × ' +
+        (a.airdrop_share * 100) + '% airdrop ÷ ' + a.wallets.toLocaleString('en-US') + ' wallets'],
       ['gas, set-up and exit', '-$' + (a.gas_setup + a.gas_exit), 'one deposit and one withdrawal'],
       ['carry on the deposit', '-$' + r.farm_carry_usd.toFixed(2), '$' + r.farm_capital_usd + ' at ' + (a.carry_apr * 100) + '% for ' + r.farm_days + ' days'],
     ];
@@ -308,11 +310,13 @@
       '<h3>The arithmetic</h3>' +
       '<div class="wf">' +
         '<div class="lab">TVL, from the snapshot</div><div class="val">' + usd(r.tvl_usd) + '</div>' +
-        '<div class="lab">Fitted multiple at this size' + (comps ? ' (' + esc(comps.category) + ', ' + comps.comps + ' comps)' : '') + '</div><div class="val">' + x(r.multiple) + '</div>' +
+        '<div class="lab">Fitted multiple at this size' + (comps ? ' (' + esc(comps.category) + ', ' + comps.comps + (comps.comps === 1 ? ' comp' : ' comps') + ')' : '') + '</div><div class="val">' + x(r.multiple) + '</div>' +
         '<div class="lab">size slope ' + fit.slope.toFixed(3) + ' per decade × category offset ' + (m.category_offset >= 0 ? '+' : '') + m.category_offset.toFixed(3) + '</div><div class="val">' + x(Math.exp(fit.intercept + fit.slope * Math.log10(r.tvl_usd) + m.category_offset)) + ' raw</div>' +
         '<div class="lab">7-day growth ' + (m.growth_pct >= 0 ? '+' : '') + m.growth_pct.toFixed(1) + '% → growth multiplier</div><div class="val">' + x(m.growth_multiplier) + '</div>' +
         '<div class="lab">patience: ' + age(m.age_days) + ' with no token → multiplier</div><div class="val">' + x(m.patience_multiplier) + '</div>' +
-        '<div class="lab tot">TVL × multiple × growth × patience</div><div class="val tot">' + usd(r.implied_value_usd) + '</div>' +
+        '<div class="lab">value if it launches</div><div class="val">' + usd(r.implied_value_usd) + '</div>' +
+        '<div class="lab">× launch odds (' + Math.round(r.launch_odds * 100) + '% of ' + esc(r.category || 'unclassified') + ' records a token)</div><div class="val">× ' + r.launch_odds.toFixed(2) + '</div>' +
+        '<div class="lab tot">expected value, before a wallet\'s share</div><div class="val tot">' + usd(r.expected_value_usd) + '</div>' +
       '</div>' +
       '<h3>Why this multiple</h3>' +
       '<div class="note">' + (comps && comps.comps >= 3
@@ -323,6 +327,15 @@
         ? 'Only <b>' + comps.comps + ' trading protocol' + (comps.comps === 1 ? '' : 's') + '</b> in the snapshot shares the <b>' + esc(comps.category) + '</b> category (median ' + x(comps.median_multiple) + '), which is too thin to move a price: the fit needs three comps before a category may shift the curve, so this row takes the market-wide size curve alone at <b>' + x(r.multiple) + '</b>.'
         : 'This protocol records no DefiLlama category, so it takes the market-wide size curve alone: <b>' + x(r.multiple) + '</b>.') +
         ' Nothing here is special-cased by name: every row runs the same function.</div>' +
+      '<h3>Why this launch odds</h3>' +
+      '<div class="note">' + (function () {
+        var co = (D.category_odds || []).filter(function (c) { return c.category === (r.category || 'unclassified'); })[0];
+        if (!co) return 'No category record, so the odds fall back to the market-wide 50%.';
+        return '<b>' + co.with_token + ' of the ' + co.total + '</b> protocols DefiLlama files under <b>' + esc(co.category) + '</b> in this snapshot already record a token — a base rate of <b>' +
+          Math.round(co.share * 100) + '%</b>, smoothed by one either way so a small category cannot claim certainty. ' +
+          'That is a cross-sectional prior, not a forecast: the snapshot carries no launch dates, so nothing here claims when a launch would come. ' +
+          'It answers a narrower question — how common a token is in the company this protocol keeps.';
+      })() + '</div>' +
       '<h3>The comps behind this multiple</h3>' +
       compsTable(r) +
       '<h3>What the farm is worth, net</h3>' +
@@ -430,17 +443,29 @@
         '<dt>combined</dt><dd>' + x(ts.combined_miss) + ', against ' + x(chk.model_median_miss) + ' leave-one-out</dd>' +
         '</dl>' +
         '<p class="small" style="margin-top:10px">Both directions are run so neither half of the history is privileged. The forward test is the honest one for a radar: it prices protocols from a curve that had never seen their period.</p></div>' +
+        '<div class="card" style="margin-top:16px"><h2>Launch odds: a base rate, not a forecast</h2>' +
+        '<p>Value if it launches is half the question. The other half is whether it launches, and the snapshot answers a narrower version of it: how often a token exists in the company a protocol keeps.</p>' +
+        '<table class="mini"><thead><tr><th>Category</th><th class="num">With token</th><th class="num">Total</th><th class="num">Base rate</th></tr></thead><tbody>' +
+        (D.category_odds || []).slice(0, 9).map(function (c) {
+          return '<tr><td class="cat">' + esc(c.category) + '</td><td class="num">' + c.with_token + '</td><td class="num">' + c.total +
+            '</td><td class="num">' + Math.round(c.share * 100) + '%</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<p class="small" style="margin-top:10px">Laplace-smoothed as <code>(with + 1) / (total + 2)</code> so a three-protocol category cannot claim certainty.</p>' +
+        '<div class="note" style="margin-top:10px"><b>What this is not.</b> It is not a hazard and it is not a date. The snapshot records no launch dates, so a time-to-launch model cannot be estimated from it — and it is not invented here. A test on the data settled the point: token-bearing protocols are <b>older</b> in DefiLlama\'s record than pre-token ones in 17 of 20 categories, because <code>listed_at</code> is when tracking began, not when a token appeared. An age term would have read that confound as signal, so the model carries none.</div></div>' +
         '<div class="card" style="margin-top:16px"><h2>What the farm economics assume</h2>' +
         '<p>A verdict is worth nothing if its assumptions are hidden, so they are on the page:</p>' +
         '<dl class="kv">' +
-        '<dt>capture</dt><dd>' + D.farm_assumptions.capture + ' of the implied value, one farmed wallet\'s share</dd>' +
+        '<dt>odds</dt><dd>the category base rate above, applied to the implied value</dd>' +
+        '<dt>airdrop share</dt><dd>' + (D.farm_assumptions.airdrop_share * 100) + '% of the launch value goes to users</dd>' +
+        '<dt>wallets</dt><dd>' + D.farm_assumptions.wallets.toLocaleString('en-US') + ' qualifying wallets share it, so one wallet gets ' +
+          (D.farm_assumptions.airdrop_share / D.farm_assumptions.wallets).toExponential(1) + ' of the value</dd>' +
         '<dt>gas</dt><dd>$' + D.farm_assumptions.gas_setup + ' in, $' + D.farm_assumptions.gas_exit + ' out</dd>' +
         '<dt>carry</dt><dd>' + (D.farm_assumptions.carry_apr * 100) + '% a year on the deposit, the yield it gives up</dd>' +
-        '<dt>farm</dt><dd>net of at least $' + D.farm_assumptions.min_net + ' for one wallet</dd>' +
-        '<dt>thin</dt><dd>net between $0 and $' + D.farm_assumptions.min_net + '</dd>' +
-        '<dt>skip</dt><dd>the plan costs more than it expects: ' + D.farm_counts.skip + ' of ' + D.board_size + ' rows</dd>' +
+        '<dt>farm / thin / skip</dt><dd>net above $' + D.farm_assumptions.min_net + ', between $0 and it, below zero — ' +
+          D.farm_counts.farm + ' / ' + D.farm_counts.thin + ' / ' + D.farm_counts.skip + ' rows here</dd>' +
         '</dl>' +
-        '<p class="small" style="margin-top:10px">Change the capture and the verdicts move; that is the point of stating it. A reader who thinks one wallet captures a tenth of this gets ' + D.farm_counts.farm + ' farm rows; one who thinks it captures ten times more gets more.</p></div>' +
+        '<p class="small" style="margin-top:10px">Every one of those is a number a reader can disagree with and change: halve the wallet count and the farm list grows, double it and most rows go quiet. The verdict is the arithmetic, not a slogan.</p></div>' +
         '<div class="card" style="margin-top:16px"><h2>What the fit pays by category</h2>' +
         '<table><thead><tr><th>Category</th><th class="num">Comps</th><th class="num">Median</th><th class="num">At $100M TVL</th></tr></thead><tbody>' +
         cats5.map(function (c) { return '<tr><td class="cat">' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + x(c.median_multiple) + '</td><td class="num">' + x(c.multiple_at_100m) + '</td></tr>'; }).join('') +
