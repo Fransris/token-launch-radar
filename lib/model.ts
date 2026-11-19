@@ -74,7 +74,23 @@ export const MODEL: ModelConstants = {
   min_tvl: 5_000_000,
 };
 
-export const MODEL_VERSION = 'comps-3';
+export const MODEL_VERSION = 'comps-4';
+
+/**
+ * The farm economics, stated so a reader can disagree with any of them:
+ *   expected  = implied value × CAPTURE       one farmed wallet's share of a launch that size
+ *   carry     = deposit × CARRY_APR × days/365  what the deposit would have earned elsewhere
+ *   cost      = GAS_SETUP + GAS_EXIT + carry
+ *   net       = expected - cost
+ * A plan is worth doing when net clears FARM_MIN_NET; below zero it is a skip.
+ */
+export const FARM = {
+  capture: 1e-6,
+  carry_apr: 0.06,
+  gas_setup: 12,
+  gas_exit: 3,
+  min_net: 10,
+};
 
 /** One category: its comps, its fitted offset, and the multiple the fit pays there at $100M TVL. */
 export interface CategoryFit {
@@ -94,6 +110,7 @@ export interface Fit {
   slope: number;
   categories: CategoryFit[];
   check: ModelCheck;
+  time_split: TimeSplitCheck;
 }
 
 /** What the leave-one-out check measured on the snapshot's trading protocols. */
@@ -106,6 +123,22 @@ export interface ModelCheck {
   rank_ic: number;
   best: { slug: string; name: string; actual: number; predicted: number } | null;
   worst: { slug: string; name: string; actual: number; predicted: number } | null;
+}
+
+/**
+ * The second test: a time split. The protocols DefiLlama has tracked longest are fitted, and the
+ * curve they produce prices the ones listed later — a protocol the fit never saw, in the direction
+ * time actually runs. Run both ways so neither half is privileged.
+ */
+export interface TimeSplitCheck {
+  split_at: string;
+  old_n: number;
+  new_n: number;
+  old_to_new_miss: number;
+  new_to_old_miss: number;
+  old_to_new_within_2x: number;
+  new_to_old_within_2x: number;
+  combined_miss: number;
 }
 
 /** A farm step: what to do, what it costs, how long it takes. */
@@ -146,6 +179,18 @@ export interface BoardRow {
   farm_steps: string[];
   farm_cost_usd: number;
   farm_days: number;
+  /** The verdict the numbers give: is one farmed wallet worth its cost, net of gas and carry? */
+  farm_verdict: 'farm' | 'thin' | 'skip';
+  farm_capital_usd: number;
+  farm_expected_usd: number;
+  farm_carry_usd: number;
+  farm_total_cost_usd: number;
+  farm_net_usd: number;
+  /** The implied value at which this plan breaks even, so a reader can judge the margin. */
+  farm_breakeven_usd: number;
+  /** The band the fit's own measured miss puts around the point estimate. */
+  implied_low_usd: number;
+  implied_high_usd: number;
 }
 
 /** A protocol whose token already trades: the comps, and what the model would have said. */
@@ -186,6 +231,8 @@ export interface RadarData {
   protocols_total: number;
   live_size: number;
   implied_total_usd: number;
+  farm_counts: { farm: number; thin: number; skip: number };
+  farm_assumptions: typeof FARM;
   rows: BoardRow[];
   live: LiveRow[];
   comps: CompRow[];
@@ -285,6 +332,69 @@ function fittedMultiple(fit: Fit, tvl: number, category: string | null): { multi
   return { multiple: Math.min(fit.model.multiple_cap, Math.max(fit.model.multiple_floor, m)), offset };
 }
 
+/** A curve fitted on one set of comps, able to price anything it did not see. */
+interface Curve {
+  a: number;
+  b: number;
+  offsetOf: (category: string | null) => number;
+}
+
+/** Fit the size curve and the category offsets on `train`, with the same shrinkage the board uses. */
+function fitOn(train: SnapshotProtocol[], model: ModelConstants): Curve {
+  const { a, b } = sizeCurve(train);
+  const k = model.shrink_k;
+  const byCat = new Map<string, number[]>();
+  for (const p of train) {
+    const key = p.category ?? 'unclassified';
+    const residual = logMultiple(p) - (a + b * Math.log10(p.tvl_usd));
+    const list = byCat.get(key);
+    if (list === undefined) byCat.set(key, [residual]);
+    else list.push(residual);
+  }
+  const offsets = new Map<string, number>();
+  for (const [cat, residuals] of byCat) {
+    offsets.set(cat, residuals.length < model.min_category_comps ? 0 : (residuals.length * median(residuals)) / (residuals.length + k));
+  }
+  return { a, b, offsetOf: (category) => offsets.get(category ?? 'unclassified') ?? 0 };
+}
+
+/** What a curve says a protocol is worth, before growth and patience. */
+function priceWith(curve: Curve, p: SnapshotProtocol, model: ModelConstants): number {
+  const m = Math.exp(curve.a + curve.b * Math.log10(Math.max(p.tvl_usd, 1)) + curve.offsetOf(p.category));
+  return Math.min(model.multiple_cap, Math.max(model.multiple_floor, m)) * p.tvl_usd;
+}
+
+/** The time split: fit the older half, price the newer one, and the reverse. */
+function timeSplit(comps: SnapshotProtocol[], asOf: string, model: ModelConstants): TimeSplitCheck {
+  const dated = comps.filter((p) => p.listed_at !== null).sort((x, y) => (x.listed_at! < y.listed_at! ? -1 : x.listed_at! > y.listed_at! ? 1 : 0));
+  const mid = dated.length >> 1;
+  const older = dated.slice(0, mid);
+  const newer = dated.slice(mid);
+  const empty: TimeSplitCheck = { split_at: dated[mid]?.listed_at ?? asOf, old_n: older.length, new_n: newer.length, old_to_new_miss: 0, new_to_old_miss: 0, old_to_new_within_2x: 0, new_to_old_within_2x: 0, combined_miss: 0 };
+  if (older.length < 8 || newer.length < 8) return empty;
+  const test = (train: SnapshotProtocol[], hold: SnapshotProtocol[]): { miss: number; within: number } => {
+    const curve = fitOn(train, model);
+    const errs = hold.map((p) => Math.abs(Math.log(priceWith(curve, p, model) / (p.mcap_usd ?? 1))));
+    const within = hold.filter((p) => {
+      const r = priceWith(curve, p, model) / (p.mcap_usd ?? 1);
+      return r >= 0.5 && r <= 2;
+    }).length;
+    return { miss: Math.exp(median(errs)), within: within / hold.length };
+  };
+  const fwd = test(older, newer);
+  const back = test(newer, older);
+  return {
+    split_at: dated[mid]!.listed_at!,
+    old_n: older.length,
+    new_n: newer.length,
+    old_to_new_miss: round4(fwd.miss),
+    new_to_old_miss: round4(back.miss),
+    old_to_new_within_2x: round4(fwd.within),
+    new_to_old_within_2x: round4(back.within),
+    combined_miss: round4(Math.sqrt(fwd.miss * back.miss)),
+  };
+}
+
 /** Spearman's rank correlation, with average ranks for ties. */
 function spearman(xs: number[], ys: number[]): number {
   const n = xs.length;
@@ -357,19 +467,17 @@ export function fitModel(snapshot: Snapshot, model: ModelConstants = MODEL): Fit
     slope: round4(b),
     categories,
     check: { scored: 0, model_median_miss: 0, blanket_median_miss: 0, within_2x: 0, within_2x_blanket: 0, rank_ic: 0, best: null, worst: null },
+    time_split: timeSplit(comps, snapshot.as_of, model),
   };
 
   // Leave-one-out: price every trading protocol from the comps of the others, never itself.
   const scored: { p: SnapshotProtocol; actual: number; predicted: number; blanket: number }[] = [];
   for (const p of comps) {
     const rest = comps.filter((q) => q.slug !== p.slug);
-    const curve = sizeCurve(rest);
-    const residuals = rest.filter((q) => (q.category ?? 'unclassified') === (p.category ?? 'unclassified')).map((q) => logMultiple(q) - (curve.a + curve.b * Math.log10(q.tvl_usd)));
-    const offset = residuals.length < model.min_category_comps ? 0 : (residuals.length * median(residuals)) / (residuals.length + k);
-    const multiple = Math.min(model.multiple_cap, Math.max(model.multiple_floor, Math.exp(curve.a + curve.b * Math.log10(p.tvl_usd) + offset)));
+    const curve = fitOn(rest, model);
     const actual = p.mcap_usd ?? 0;
     if (actual <= 0) continue;
-    scored.push({ p, actual, predicted: p.tvl_usd * multiple, blanket: p.tvl_usd * Math.exp(median(rest.map(logMultiple))) });
+    scored.push({ p, actual, predicted: priceWith(curve, p, model), blanket: p.tvl_usd * Math.exp(median(rest.map(logMultiple))) });
   }
   const miss = (v: { predicted: number; actual: number }): number => Math.abs(Math.log(v.predicted / v.actual));
   const within2 = (v: { predicted: number; actual: number }): number => (v.predicted / v.actual >= 0.5 && v.predicted / v.actual <= 2 ? 1 : 0);
@@ -514,10 +622,16 @@ export function stepText(step: FarmStep): string {
 /** The board: every pre-token protocol the snapshot records, strongest implied value first. */
 export function buildBoard(snapshot: Snapshot, fit: Fit): BoardRow[] {
   const watch = new Set(snapshot.watchlist);
+  const band = Math.exp(fit.check.model_median_miss);
   const scored = snapshot.protocols.filter(isRankable).map((p) => ({ p, v: impliedValue(p, snapshot.as_of, fit) }));
   scored.sort((a, b) => b.v.implied - a.v.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => {
     const plan = farmSteps(s.p, s.v.age);
+    const expected = s.v.implied * FARM.capture;
+    const carry = plan.capital * FARM.carry_apr * (plan.days / 365);
+    const totalCost = FARM.gas_setup + FARM.gas_exit + carry;
+    const net = expected - totalCost;
+    const verdict: 'farm' | 'thin' | 'skip' = net >= FARM.min_net ? 'farm' : net >= 0 ? 'thin' : 'skip';
     return {
       rank: i + 1,
       slug: s.p.slug,
@@ -548,6 +662,15 @@ export function buildBoard(snapshot: Snapshot, fit: Fit): BoardRow[] {
       farm_steps: plan.steps.map(stepText),
       farm_cost_usd: plan.capital,
       farm_days: plan.days,
+      farm_verdict: verdict,
+      farm_capital_usd: plan.capital,
+      farm_expected_usd: round4(expected),
+      farm_carry_usd: round4(carry),
+      farm_total_cost_usd: round4(totalCost),
+      farm_net_usd: round4(net),
+      farm_breakeven_usd: Math.round(totalCost / FARM.capture),
+      implied_low_usd: Math.max(1, Math.round(s.v.implied / band)),
+      implied_high_usd: Math.round(s.v.implied * band),
     };
   });
 }
@@ -599,6 +722,12 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     protocols_total: snapshot.protocols.length,
     live_size: live.length,
     implied_total_usd: board.reduce((a, r) => a + r.implied_value_usd, 0),
+    farm_counts: {
+      farm: board.filter((r) => r.farm_verdict === 'farm').length,
+      thin: board.filter((r) => r.farm_verdict === 'thin').length,
+      skip: board.filter((r) => r.farm_verdict === 'skip').length,
+    },
+    farm_assumptions: FARM,
     rows: board,
     live,
     comps,

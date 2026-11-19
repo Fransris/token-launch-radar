@@ -5,7 +5,7 @@
 [![reward](https://make.fun/badge/token-radar-01/Fransris/token-launch-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
 A board of every protocol in the sealed DefiLlama snapshot that records no token, ranked by what its
-launch would plausibly be worth, with a costed farm plan for each one.
+launch would plausibly be worth, each with a farm plan and a verdict on whether the farm pays.
 
 ## Run it
 
@@ -20,21 +20,32 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-ki
 It answers one question with the snapshot's own figures: *if this protocol issued a token today, what
 would it be worth?* Nothing is hardcoded by name and no multiple is a constant.
 
-```
-y = ln(mcap / tvl)   winsorized to [0.01, 20]
-x = log10(tvl)
-y = a + b·x + offset(category)          fitted on the protocols whose token already trades
-offset(c) = n·median(residual) / (n+6)  shrunk toward the market
-offset(c) = 0 when n < 3               too thin to move a price
-multiple(p) = exp(a + b·log10(tvl) + offset(cat))
+**How a value is built**
 
-implied = tvl · multiple · (1 + clamp(7d,-60,+150)/100 · 0.30) · (0.85 + min(age,1825)/1825 · 0.15)
-```
+1. **Size curve.** `multiple = exp(a + b · log10 TVL)`, fitted on the 119 protocols in the snapshot
+   whose token already trades. A dollar of TVL is paid less as a protocol grows; every row inherits
+   that slope instead of a single blanket number.
+2. **Category tilt.** `× exp(offset)`, where `offset = n · median(residual) / (n + 6)`, and `offset = 0`
+   when a category holds fewer than 3 comps — too thin to move a price.
+3. **Seven-day growth.** `× (1 + clamp(7d, -60, +150)/100 · 0.30)`.
+4. **Patience.** `× (0.85 + min(age, 1825)/1825 · 0.15)` — how long it has run recording no token.
+5. **Implied value.** `TVL × multiple × growth × patience`.
 
-The fit is checked leave-one-out: every trading protocol is re-priced from the comps of the others,
-never itself. On this snapshot the median miss is **3.38×**, against **4.94×** for one blanket
-multiple, with 34% inside 2× and a rank correlation of 0.38. Those numbers ship in `data.js` and are
-shown on the page, because a radar that hides its own error is a horoscope.
+**Two tests, both on the snapshot's own protocols**
+
+- **Leave-one-out:** every trading protocol re-priced from the comps of the others, never itself.
+  Median miss **3.38×**, against **4.94×** for one blanket multiple; 34% inside 2×; rank IC 0.38.
+- **Time split:** the 43 comps tracked before 2024-02-28 fit the curve, and it prices the 44 tracked
+  since — protocols from a period the fit never saw. **2.39×** forward, 3.03× backward, 2.69×
+  combined. The forward number is the honest one for a radar.
+
+**Farm verdicts, with the assumptions stated**
+
+`expected = implied × 0.000001` (one wallet's share), minus gas ($12 in, $3 out) and carry (6% a year
+on the deposit). 14 rows clear $10 net and read **farm**; 21 land between $0 and $10 (**thin**); 163
+cost more than they expect (**skip**). Every row also shows the implied value at which its plan breaks
+even, so the margin is visible rather than asserted. Those numbers ship in `data.js` and are shown on
+the page, because a radar that hides its own error is a horoscope.
 
 ## What it writes
 

@@ -40,7 +40,7 @@ label.chk input{accent-color:var(--amber)}
 .count{margin-left:auto;font:11.5px/1 var(--mono);color:var(--dim)}
 .count b{color:var(--cyan);font-weight:600}
 table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-thead th{position:sticky;top:57px;z-index:5;background:#0d141c;font:10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:11px 10px;border-bottom:1px solid var(--line2);cursor:pointer;white-space:nowrap}
+thead th{background:#0d141c;font:10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:11px 10px;border-bottom:1px solid var(--line2);cursor:pointer;white-space:nowrap}
 thead th:hover{color:var(--ink)}
 thead th.num,td.num{text-align:right;font-family:var(--mono)}
 tbody tr{border-bottom:1px solid #16202b;cursor:pointer}
@@ -117,3 +117,51 @@ table.mini tr:last-child td{border-bottom:0}
 .modelstrip code{color:#c8d6e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
 .modelstrip span:last-child{color:var(--dim);white-space:nowrap}
 .modelstrip .tag{color:#0a0e13;background:var(--amber);border-radius:5px;padding:3px 7px;font-weight:700;font-size:10.5px;white-space:nowrap}
+
+/* --- the five-card strip, the self-check, the verdicts, the ladder, the band --- */
+.stats.five{grid-template-columns:repeat(5,1fr)}
+.stat .v em{font:11px var(--mono);color:var(--dim);font-style:normal;margin-left:5px;letter-spacing:.06em;text-transform:uppercase}
+.stat.farmc .v{color:var(--green)}
+.verify{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:9px 13px;margin:0 0 12px;
+  background:#0c1a14;border:1px solid #1b3a2c;border-radius:9px;font:11.5px var(--mono);color:var(--mute)}
+.verify b{color:var(--green);font-weight:600}
+.verify .ok{color:#7fe3b0}
+.verify .bad{color:var(--red)}
+.verify .note-inline{margin-left:auto;color:var(--dim);font-size:10.5px}
+.vchip{display:inline-block;font:10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:4px;border:1px solid}
+.vchip.farm{color:#7fe3b0;border-color:#2a6b4a;background:#0e2419}
+.vchip.thin{color:var(--amber);border-color:#6b4a1f;background:#231a0d}
+.vchip.skip{color:#8fa3b8;border-color:#2a3949;background:#121a22}
+.vcell .vnet{display:block;font:10.5px var(--mono);color:var(--dim);margin-top:3px}
+ol.ladder{margin:0 0 12px;padding-left:20px;color:#c8d6e5;font-size:13px}
+ol.ladder li{margin-bottom:9px}
+ol.ladder b{color:var(--ink)}
+ol.ladder code{font:11.5px var(--mono);color:var(--cyan);background:#0b1117;border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+table.econ td{font-size:12.5px}
+table.econ tr.tot td{border-top:1px solid var(--line2);background:#0e1620;font-weight:600;color:var(--ink)}
+.bandbar{margin:4px 0 16px}
+.bandbar .track{position:relative;height:8px;background:#0b1117;border-radius:5px;margin-bottom:7px;overflow:hidden}
+.bandbar .track i{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,rgba(79,209,197,.15),rgba(79,209,197,.55),rgba(79,209,197,.15));border-radius:5px}
+.bandbar .track b.pt{position:absolute;top:-3px;width:2px;height:14px;background:var(--amber);border-radius:1px}
+.bandbar .bandlab{display:flex;justify-content:space-between;font:10.5px var(--mono);color:var(--dim)}
+.bandbar .bandlab .mid{color:var(--amber)}
+.bandbar p{margin:7px 0 0}
+
+/* tighten the top of the board so the cover carries the KPI strip, the self-check and the curve */
+h1{font-size:21px;margin:2px 0 4px}
+.lede{font-size:12.5px;margin:0 0 12px;line-height:1.4}
+.stats{gap:9px;margin-bottom:10px}
+.stat{padding:9px 12px}
+.stat .v{font-size:20px;margin:5px 0 2px}
+.stat .s{font-size:10.5px;line-height:1.3}
+.verify{padding:7px 11px;margin-bottom:10px;font-size:11px;gap:5px 12px}
+.modelstrip{padding:7px 11px;margin-bottom:10px;font-size:11px}
+.vizcard{padding:10px 13px 9px;margin:10px 0 10px}
+.vizhead h2{font-size:13px}
+.hint{font-size:10.5px}
+.controls{padding:8px 11px;margin-bottom:9px;gap:7px}
+input[type=search],select{font-size:12px;padding:6px 8px}
+input[type=search]{min-width:220px}
+thead th{padding:9px 9px}
+td{padding:7px 9px}
+.nm{font-size:13px}
