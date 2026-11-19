@@ -1,0 +1,7 @@
+{
+  "name": "token-launch-radar",
+  "private": true,
+  "type": "module",
+  "description": "Pre-token protocol board, priced from the snapshot's own comps.",
+  "license": "MIT"
+}
